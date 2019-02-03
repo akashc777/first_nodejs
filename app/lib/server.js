@@ -143,13 +143,13 @@ server.router = {
 server.init = () => {
   // Start the HTTP server
   // Start the server
-  server.httpServer.listen(8080,'192.168.0.104' ,() => {
+  server.httpServer.listen(1080,'172.31.85.108 ' ,() => {
     console.log("the server is listing on the port "+config.httpport+" in "+config.envName+" mode");
   });
 
   // Start the HTTPS server
   // Start the server
-  server.httpsServer.listen(8081,'192.168.0.104' ,() => {
+  server.httpsServer.listen(1443,'172.31.85.108' ,() => {
     console.log("the server is listing on the port "+config.httpsport+" in "+config.envName+" mode");
   });
 
