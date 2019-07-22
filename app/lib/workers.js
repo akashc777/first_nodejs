@@ -1,286 +1,284 @@
 /*
-*
-* Worker-related tasks
-*
-*
-*/
+ * Worker-related tasks
+ *
+ */
 
-// Dependencies
-const path = require('path');
-const fs = require('fs');
-const _data = require('./data');
-const https = require('https');
-const http = require('http');
-const helpers = require('./helpers');
-const url = require('url');
+ // Dependencies
+var path = require('path');
+var fs = require('fs');
+var _data = require('./data');
+var https = require('https');
+var http = require('http');
+var helpers = require('./helpers');
+var url = require('url');
+const _logs = require('./logs');
+const util = require('util');
+const debug = util.debuglog('workers')
 
-// Instantiate the worker object
-let workers = {};
+// Instantiate the worker module object
+var workers = {};
 
-
-// Lookup all checks, get their data, send to a validator
-workers.gatherAllChecks = () => {
+// Lookup all checks, get their data, send to validator
+workers.gatherAllChecks = function(){
   // Get all the checks
-  _data.list('checks', (err, checks) => {
+  _data.list('checks',function(err,checks){
+    
     if(!err && checks && checks.length > 0){
-      checks.forEach((check) => {
-
-        // Read in the check data by passing the check name
-        _data.read('checks', check,(err, originalCheckData) => {
-
-          if (!err && originalCheckData) {
-            // Pass the data to the check validator, and let that function continue or log error as needed
+      checks.forEach(function(check){
+        // Read in the check data
+        _data.read('checks',check,function(err,originalCheckData){
+          if(!err && originalCheckData){
+            // Pass it to the check validator, and let that function continue the function or log the error(s) as needed
             workers.validateCheckData(originalCheckData);
-
-          }else {
-            console.log("Error reading one of the checks data");
+          } else {
+            debug("Error reading one of the check's data: ",err);
           }
-
-
         });
-
       });
-
     } else {
-      console.log("Error: Could not find any checks to process");
+      debug('Error: Could not find any checks to process');
     }
   });
+
+
 };
 
-
-
-// Sanity-check the check-data
-workers.validateCheckData = (originalCheckData) => {
-
-
-
+// Sanity-check the check-data,
+workers.validateCheckData = function(originalCheckData){
   originalCheckData = typeof(originalCheckData) == 'object' && originalCheckData !== null ? originalCheckData : {};
   originalCheckData.id = typeof(originalCheckData.id) == 'string' && originalCheckData.id.trim().length == 20 ? originalCheckData.id.trim() : false;
   originalCheckData.userPhone = typeof(originalCheckData.userPhone) == 'string' && originalCheckData.userPhone.trim().length == 10 ? originalCheckData.userPhone.trim() : false;
-  originalCheckData.protocol = typeof(originalCheckData.protocol) == 'string' && ['http', 'https'].indexOf(originalCheckData.protocol) > -1 ? originalCheckData.protocol : false;
-  originalCheckData.url = typeof(originalCheckData.url) == 'string' &&  originalCheckData.url.trim().length > 0  ? originalCheckData.url : false;
-  originalCheckData.method = typeof(originalCheckData.method) == 'string' && ['get', 'push', 'put', 'delete'].indexOf(originalCheckData.method) > -1 ? originalCheckData.method : false;
-  originalCheckData.sucessCodes = typeof(originalCheckData.sucessCodes) == 'object' && originalCheckData.sucessCodes instanceof Array && originalCheckData.sucessCodes.length > 0 ? originalCheckData.sucessCodes : false;
-  originalCheckData.timeoutSeconds = typeof(originalCheckData.timeoutSeconds) == 'number' && originalCheckData.timeoutSeconds % 1 === 0 && originalCheckData.timeoutSeconds >= 1 && originalCheckData.timeoutSeconds <= 5 ? originalCheckData.timeoutSeconds: false;
-
-  // Set the key that may not be set (if the workers have never seen this check before
-  originalCheckData.state = typeof(originalCheckData.state) == 'string' && ['up', 'down'].indexOf(originalCheckData.state) > -1 ? originalCheckData.state : 'down';
-  originalCheckData.lastChecked = typeof(originalCheckData.lastChecked) == 'number' && originalCheckData.lastChecked > 0 ? originalCheckData.lastChecked: false;
-
-  // If all the check pass, pass the data anlong to the next step in the process
+  originalCheckData.protocol = typeof(originalCheckData.protocol) == 'string' && ['http','https'].indexOf(originalCheckData.protocol) > -1 ? originalCheckData.protocol : false;
+  originalCheckData.url = typeof(originalCheckData.url) == 'string' && originalCheckData.url.trim().length > 0 ? originalCheckData.url.trim() : false;
+  originalCheckData.method = typeof(originalCheckData.method) == 'string' &&  ['post','get','put','delete'].indexOf(originalCheckData.method) > -1 ? originalCheckData.method : false;
+  originalCheckData.successCodes = typeof(originalCheckData.sucessCodes) == 'object' && originalCheckData.sucessCodes instanceof Array && originalCheckData.sucessCodes.length > 0 ? originalCheckData.sucessCodes : false;
+  originalCheckData.timeOutSeconds = typeof(originalCheckData.timeOutSeconds) == 'number' && originalCheckData.timeOutSeconds % 1 === 0 && originalCheckData.timeOutSeconds >= 1 && originalCheckData.timeOutSeconds <= 5 ? originalCheckData.timeOutSeconds : false;
+  // Set the keys that may not be set (if the workers have never seen this check before)
+  originalCheckData.state = typeof(originalCheckData.state) == 'string' && ['up','down'].indexOf(originalCheckData.state) > -1 ? originalCheckData.state : 'down';
+  originalCheckData.lastChecked = typeof(originalCheckData.lastChecked) == 'number' && originalCheckData.lastChecked > 0 ? originalCheckData.lastChecked : false;
 
 
-  if (originalCheckData.id &&
+  // If all checks pass, pass the data along to the next step in the process
+  if(originalCheckData.id &&
   originalCheckData.userPhone &&
-  originalCheckData.protocol  &&
+  originalCheckData.protocol &&
   originalCheckData.url &&
   originalCheckData.method &&
-  originalCheckData.sucessCodes &&
-  originalCheckData.timeoutSeconds
-  ) {
-    workers.performChecks(originalCheckData);
-
+  originalCheckData.successCodes &&
+  originalCheckData.timeOutSeconds){
+    workers.performCheck(originalCheckData);
   } else {
-    console.log('Error: One of the checks is not properly formated. skipping it.');
+    // If checks fail, log the error and fail silently
+    debug("Error: one of the checks is not properly formatted. Skipping.");
   }
-
 };
 
+// Perform the check, send the originalCheck data and the outcome of the check process to the next step in the process
+workers.performCheck = function(originalCheckData){
 
-// performe the check, send the originalCheckData and the outcome of the check process, to the next step in the process
-workers.performChecks = (originalCheckData) => {
   // Prepare the intial check outcome
-  let checkOutcome = {
-    error: false,
-    responseCode: false,
+  var checkOutcome = {
+    'error' : false,
+    'responseCode' : false
   };
 
   // Mark that the outcome has not been sent yet
-  let outcomeSent = false;
+  var outcomeSent = false;
 
-  // Parse the hostname and the path out of the original check data
-  let parsedUrl = url.parse(originalCheckData.protocol + '://' + originalCheckData.url, true);
-  let hostName = parsedUrl.hostname;
-  let path = parsedUrl.path; // Using path and not 'Pathname' because we want the query srting
+  // Parse the hostname and path out of the originalCheckData
+  var parsedUrl = url.parse(originalCheckData.protocol+'://'+originalCheckData.url, true);
+  var hostName = parsedUrl.hostname;
+  var path = parsedUrl.path; // Using path not pathname because we want the query string
 
-  // Constructing a request
-  let requestDetails = {
-    protocol: originalCheckData.protocol + ':',
-    hostname: hostName,
-    method: originalCheckData.method.toUpperCase(),
-    path,
-    timeout: originalCheckData.timeoutSeconds * 1000
+  // Construct the request
+  var requestDetails = {
+    'protocol' : originalCheckData.protocol+':',
+    'hostname' : hostName,
+    'method' : originalCheckData.method.toUpperCase(),
+    'path' : path,
+    'timeout' : originalCheckData.timeoutSeconds * 1000
   };
 
+  // Instantiate the request object (using either the http or https module)
+  var _moduleToUse = originalCheckData.protocol == 'http' ? http : https;
+  var req = _moduleToUse.request(requestDetails,function(res){
+      // Grab the status of the sent request
+      var status =  res.statusCode;
 
-
-  // Instantiate the request object using eithr the http or https module
-  let _moduleToUse = originalCheckData.protocol == 'http' ? http : https;
-  let req = _moduleToUse.request(requestDetails, (res) => {
-
-    // Grab the status of the sent request
-    let status = res.statusCode;
-
-
-    res.on('data', (d) => {
-      console.log('\n return is :',d,'\n');
-    process.stdout.write(d);
-    });
-
-
-    // Update the check outcome ans pass the data along
-    checkOutcome.responseCode = status ;
-    if (!outcomeSent) {
-      workers.processCheckOutcome(originalCheckData, checkOutcome);
-      outcomeSent = true;
-    }
-
+      // Update the checkOutcome and pass the data along
+      checkOutcome.responseCode = status;
+      if(!outcomeSent){
+        workers.processCheckOutcome(originalCheckData,checkOutcome);
+        outcomeSent = true;
+      }
   });
 
-
-
-
-  // Bind to the error event so it dosent get thrown
-  req.on('error', (e) => {
-
-    // Update the check outcome ans pass the data along
-    checkOutcome.error = {
-      error: true,
-      value: e,
-
-    };
-    if (!outcomeSent) {
-      workers.processCheckOutcome(originalCheckData, checkOutcome);
+  // Bind to the error event so it doesn't get thrown
+  req.on('error',function(e){
+    // Update the checkOutcome and pass the data along
+    checkOutcome.error = {'error' : true, 'value' : e};
+    if(!outcomeSent){
+      workers.processCheckOutcome(originalCheckData,checkOutcome);
       outcomeSent = true;
-
     }
-
   });
 
-  // bind to the time out event
-  req.on('timeout', (e) => {
-
-    // Update the check outcome ans pass the data along
-    checkOutcome.error = {
-      error: true,
-      value: 'timeout',
-
-    };
-    if (!outcomeSent) {
-      workers.processCheckOutcome(originalCheckData, checkOutcome);
+  // Bind to the timeout event
+  req.on('timeout',function(){
+    // Update the checkOutcome and pass the data along
+    checkOutcome.error = {'error' : true, 'value' : 'timeout'};
+    if(!outcomeSent){
+      workers.processCheckOutcome(originalCheckData,checkOutcome);
       outcomeSent = true;
-
     }
-
   });
 
-  // End the req
+  // End the request
   req.end();
-
-
 };
 
-// Process the check outcome , update the check data as needed, trigger an alert if needed
-// Special logic for accomodating a check that has never been tested before (don't alert on that one )
-workers.processCheckOutcome = (originalCheckData, checkOutcome) => {
+// Process the check outcome, update the check data as needed, trigger an alert if needed
+// Special logic for accomodating a check that has never been tested before (don't alert on that one)
+workers.processCheckOutcome = function(originalCheckData,checkOutcome){
+
   // Decide if the check is considered up or down
-  let state = !checkOutcome.error && checkOutcome.responseCode && originalCheckData.sucessCodes.indexOf(checkOutcome.responseCode) > -1 ? 'up': 'down';
+  var state = !checkOutcome.error && checkOutcome.responseCode && originalCheckData.successCodes.indexOf(checkOutcome.responseCode) > -1 ? 'up' : 'down';
 
-  console.log(checkOutcome.responseCode);
   // Decide if an alert is warranted
-  let alertWarranted = originalCheckData.lastChecked && originalCheckData.state !== state ? true : false;
+  var alertWarranted = originalCheckData.lastChecked && originalCheckData.state !== state ? true : false;
 
-  // Log the outcome
-  let timeOfCheck = Date.now();
-  workers.log(originalCheckData,checkOutcome, state, alertWarranted,timeOfCheck);
-
-  // update the check data
-  let newCheckData = originalCheckData;
+  // Update the check data
+  var newCheckData = originalCheckData;
   newCheckData.state = state;
-  newCheckData.lastChecked = timeOfCheck;
+  newCheckData.lastChecked = Date.now();
 
 
+  // log the outcome
+  const timeOfCheck = Date.now()
+  workers.log(originalCheckData ,checkOutcome, state, alertWarranted, timeOfCheck);
 
   // Save the updates
-  _data.update('checks', newCheckData.id, newCheckData, (err) => {
-
-    if (!err) {
-
-      // Send the check data to the next phase in the process if needed
-      if (alertWarranted) {
-
+  _data.update('checks',newCheckData.id,newCheckData,function(err){
+    if(!err){
+      // Send the new check data to the next phase in the process if needed
+      if(alertWarranted){
         workers.alertUserToStatusChange(newCheckData);
-
-      }else {
-        console.log('check outcome has not changed no alert needed ');
+      } else {
+        debug("Check outcome has not changed, no alert needed");
       }
-
-    }else {
-      console.log('Error trying to save updates to one of the checks ');
-    }
-
-  });
-
-};
-
-// Alert to user as to a change in their check status
-
-workers.alertUserToStatusChange = (newCheckData) => {
-  let message  = 'Alert: your check for '+ newCheckData.method.toUpperCase()+' '+ newCheckData.protocol+'://'+newCheckData.url+' is currently '+newCheckData.state ;
-  helpers.sendTwilioSms(newCheckData.userPhone, message, (err) => {
-    if (!err) {
-      console.log('success User was alerted to status change in their check, via sms', message);
-    }else {
-      console.log('Error: Could not send sms to the user who had a state change in their check');
+    } else {
+      debug("Error trying to save updates to one of the checks");
     }
   });
 };
 
+// Alert the user as to a change in their check status
+workers.alertUserToStatusChange = function(newCheckData){
+  var msg = 'Alert: Your check for '+newCheckData.method.toUpperCase()+' '+newCheckData.protocol+'://'+newCheckData.url+' is currently '+newCheckData.state;
+  helpers.sendTwilioSms(newCheckData.userPhone,msg,function(err){
+    if(!err){
+      debug("Success: User was alerted to a status change in their check, via sms: ",msg);
+    } else {
+      debug("Error: Could not send sms alert to user who had a state change in their check",err);
+    }
+  });
+};
 
-
-workers.log = (originalCheckData,checkOutcome, state, alertWarranted,timeOfCheck) => {
-  // Form the log data
-  let logData = {
+workers.log = function (originalCheckData ,checkOutcome, state, alertWarranted, timeOfCheck) {
+  // form the log data
+  const logData = {
     check: originalCheckData,
     outcome: checkOutcome,
     state,
     alert: alertWarranted,
     time: timeOfCheck
-
   };
 
-  // Convert data to a string
-  let logString = JSON.stringify(logData);
+  // logString data to a string
+  const logString = JSON.stringify(logData);
 
-  // Determine the name of the log file
+  //Determine the name of the log file
+  const logFileName = originalCheckData.id;
+
+  // Append the log string to the file
+  _logs.append(logFileName, logString, function (err) {
+    if (!err) {
+      debug("Logging to file succeded");
+    }
+    else {
+      debug("Logging to file FAILED");
+    }
+  });
+
 };
-
-
-
 
 // Timer to execute the worker-process once per minute
-workers.loop = () => {
+workers.loop = function(){
+  setInterval(function(){
+    workers.gatherAllChecks();
+  },1000 * 60);
+};
 
-    setInterval(() => {
-      workers.gatherAllChecks();
-
-    }, 1000 * 5);
+// to rotate aka to compress the log files
+workers.rotateLogs = function () {
+  // listing all the non compressed log files
+  _logs.list(false, function (err, logs) {
+    if (!err && logs) {
+      logs.forEach(function (logName) {
+        // Compress the data to a different file
+        const logId = logName.replace('.log', '');
+        const newFileId = logId+'-'+Date.now();
+        _logs.compress(logId, newFileId, function (err) {
+          if (!err) {
+            // Truncating the log
+            _logs.truncate(logId, function (err) {
+              if (!err) {
+                debug("Sucess truncating the log file");
+              }else {
+                debug('Error: truncating the log file');
+              }
+            });
+          }else {
+            debug('Error: compressring one of the log files', err);
+          }
+        });
+      });
+    }else {
+      debug("Error: could not find any logs to rotate");
+    }
+  });
 };
 
 
 
+// timer to execute the log rotation process once per day
+workers.logRotationLoop = function () {
+  setInterval(function(){
+    workers.rotateLogs();
+  },1000 * 60 * 60 * 24);
+}
 
 
 // Init script
-workers.init = () => {
+workers.init = function(){
+
+  // Send to console in yellow
+  console.log('\x1b[33m%s\x1b[0m', 'Backgroud workers are running ');
+
   // Execute all the checks immediately
   workers.gatherAllChecks();
 
   // Call the loop so the checks will execute later on
   workers.loop();
 
+  // Compress all the logs immedeatily
+  workers.rotateLogs();
+
+  // Call the compression loop so logs will be compressed later on
+  workers.logRotationLoop();
+
 };
 
 
-// Export the module
-module.exports = workers;
+ // Export the module
+ module.exports = workers;

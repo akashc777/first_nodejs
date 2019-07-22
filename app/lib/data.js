@@ -1,137 +1,136 @@
 /*
 *
-*
-* Library for storing and editing data
-*
+* Library used for storing and editting data
 *
 */
 
 // Dependencies
-
 const fs = require('fs');
-const path = require('path');
+const path = require('path'); // for normalising the path to different dir
 const helpers = require('./helpers');
 
-// Container for the module (to be exported)
+// Container for the module
 const lib = {};
 
 // Base directory of the data folder
-lib.baseDir = path.join( __dirname , '/../.data/')
+lib.baseDir = path.join(__dirname, '/../.data/');
 
 // Write data to a file
-lib.create = (dir, file, data, callback) => {
+lib.create = function (dir, file, data, callback) {
+
   // Open the file for writting
-  fs.open(lib.baseDir + dir + '/' + file + '.json','wx', (err, fileDescriptor) => {
-    if(!err && fileDescriptor){
-      // Convert data to stringif
+  fs.open(lib.baseDir+dir+'/'+file+'.json', 'wx', function (err, fileDescriptor) {
+    if (!err && fileDescriptor) {
+
+      // Convert data to string
       const stringData = JSON.stringify(data);
 
-      // Write to file and close interval
-      fs.writeFile(fileDescriptor, stringData, (err) => {
-        if(!err){
-          fs.close(fileDescriptor, (err) => {
-            if(!err){
-              callback(false);
-            }else{
-              callback('Error closing to new file');
-            }
-          });
-
-        }else{
-          callback('Error writting to new file');
-        }
-      });
-
-    }
-    else{
-      callback('Could not create new file, it may already exist');
-    }
-  });
-};
-
-// REad data from the file
-
-lib.read = function(dir, file, callback){
-  fs.readFile(lib.baseDir + dir + '/' + file + '.json', 'utf8', function(err, data){
-    if(!err && data){
-      let parsedData = helpers.parseJsonToObject(data);
-      callback(false, parsedData);
-    }else{
-        callback(err, data);
-    }
-
-  });
-};
-
-// Update data inside a file
-lib.update = (dir, file, data, callback) => {
-  // open the file for writting
-  fs.open(lib.baseDir + dir + '/' + file + '.json','r+', function(err, fileDescriptor){
-    if(!err && fileDescriptor){
-      // Convert data to stringif
-      const stringData = JSON.stringify(data);
-
-      // Truncate the file
-      fs.truncate(fileDescriptor, (err) => {
+      // Write to a file and close
+      fs.writeFile(fileDescriptor, stringData, function (err) {
         if (!err) {
-          // Write to the file and close interval
-          fs.writeFile(fileDescriptor, stringData, () => {
+          fs.close(fileDescriptor, function(err){
             if(!err){
-              fs.close(fileDescriptor,function(err){
-                if(!err){
-                  callback(false);
-                }else{
-                  callback('error closing the exixtingfile')
-                }
-              });
-            }else{
-              callback('writing to a existing file');
+
+              callback(false);
+
+            }else {
+              callback("Error closing new file");
             }
-
           });
-
+        }else {
+          callback('Error writting to file\n');
         }
-        else{
-          callback('Error truncating file');
-        }
-      });
-
-    }else{
-      callback('Could not open the file for update, it may not exist')
-    }
-  })
-};
-
-
-// Delete a file
-lib.delete = function(dir, file, callback){
-  // Unlink the file
-  fs.unlink(lib.baseDir + dir + '/' + file + '.json', (err) => {
-    if(!err){
-      callback(false);
-    }
-    else{
-      callback('Error deleting file');
-    }
-
-  });
-};
-
-// List all the iteams in a directory
-lib.list = (dir, callback) => {
-  fs.readdir(lib.baseDir + dir + '/', (err, data) => {
-    
-    if (!err && data && data.length > 0) {
-
-      let  trimmedFileNames = [];
-      data.forEach((fileName) => {
-        trimmedFileNames.push(fileName.replace('.json', ''));
 
       });
-      callback(false, trimmedFileNames);
 
     }else {
-      callback(err, data);
+      callback('could not create new file, it may already exist\n');
+    }
+  });
+
+};
+
+
+// REad data from a file
+lib.read = function (dir, file, callback) {
+  fs.readFile(lib.baseDir+dir+'/'+file+'.json', 'utf-8', function (err, data) {
+    if (!err && data) {
+      const parseData = helpers.parseJsonToObject(data);
+      callback(false, parseData);
+    }else {
+      callback(err, data)
+    }
+
+  });
+
+};
+
+
+// Update data inside a file
+lib.update = function (dir, file, data, callback) {
+  // OPen the file for writting
+  fs.open(lib.baseDir+dir+'/'+file+'.json', 'r+', function (err, fileDescriptor) {
+    if (!err && fileDescriptor) {
+      // Convert data to string
+      const stringData = JSON.stringify(data);
+
+      // Truncate the content of the fileDescriptor
+      fs.truncate(fileDescriptor, function (err) {
+        if (!err) {
+
+          //  Write to the file and cose it
+          fs.writeFile(fileDescriptor, stringData, function (err) {
+            if (!err) {
+              fs.close(fileDescriptor, function (err) {
+                if(!err){
+
+                  callback(false);
+
+                }else {
+                  callback("Error closing new file");
+                }
+              });
+
+            }else {
+              callback('Error writting to an existing file')
+            }
+          });
+
+        }else {
+          callback('Error truncating the file');
+        }
+      });
+
+    }else {
+      callback('could not open file for updating it may not exist yet');
+    }
+  });
+};
+
+// delete a file
+lib.delete = function (dir, file, callback) {
+  // unlink the file
+  fs.unlink(lib.baseDir+dir+'/'+file+'.json', function (err) {
+    if (!err) {
+      callback(false);
+    }else {
+      callback('Error deleting file\n');
+    }
+  });
+
+};
+
+//List all the items in a dir
+lib.list = function (dir, callback) {
+  fs.readdir(lib.baseDir+dir+'/', function (err, data) {
+    if (!err && data && data.length > 0) {
+      const trimmedFileNames = [];
+      data.forEach(function (fileName) {
+        trimmedFileNames.push(fileName.replace('.json', ''));
+      });
+      callback(false, trimmedFileNames);
+    }else {
+      callback(err, data)
     }
   });
 };
