@@ -11,9 +11,9 @@ var https = require('https');
 var http = require('http');
 var helpers = require('./helpers');
 var url = require('url');
-const _logs = require('./logs');
-const util = require('util');
-const debug = util.debuglog('workers')
+var _logs = require('./logs');
+var util = require('util');
+var debug = util.debuglog('workers');
 
 // Instantiate the worker module object
 var workers = {};
@@ -22,7 +22,6 @@ var workers = {};
 workers.gatherAllChecks = function(){
   // Get all the checks
   _data.list('checks',function(err,checks){
-    
     if(!err && checks && checks.length > 0){
       checks.forEach(function(check){
         // Read in the check data
@@ -39,8 +38,6 @@ workers.gatherAllChecks = function(){
       debug('Error: Could not find any checks to process');
     }
   });
-
-
 };
 
 // Sanity-check the check-data,
@@ -51,12 +48,11 @@ workers.validateCheckData = function(originalCheckData){
   originalCheckData.protocol = typeof(originalCheckData.protocol) == 'string' && ['http','https'].indexOf(originalCheckData.protocol) > -1 ? originalCheckData.protocol : false;
   originalCheckData.url = typeof(originalCheckData.url) == 'string' && originalCheckData.url.trim().length > 0 ? originalCheckData.url.trim() : false;
   originalCheckData.method = typeof(originalCheckData.method) == 'string' &&  ['post','get','put','delete'].indexOf(originalCheckData.method) > -1 ? originalCheckData.method : false;
-  originalCheckData.successCodes = typeof(originalCheckData.sucessCodes) == 'object' && originalCheckData.sucessCodes instanceof Array && originalCheckData.sucessCodes.length > 0 ? originalCheckData.sucessCodes : false;
-  originalCheckData.timeOutSeconds = typeof(originalCheckData.timeOutSeconds) == 'number' && originalCheckData.timeOutSeconds % 1 === 0 && originalCheckData.timeOutSeconds >= 1 && originalCheckData.timeOutSeconds <= 5 ? originalCheckData.timeOutSeconds : false;
+  originalCheckData.successCodes = typeof(originalCheckData.successCodes) == 'object' && originalCheckData.successCodes instanceof Array && originalCheckData.successCodes.length > 0 ? originalCheckData.successCodes : false;
+  originalCheckData.timeoutSeconds = typeof(originalCheckData.timeoutSeconds) == 'number' && originalCheckData.timeoutSeconds % 1 === 0 && originalCheckData.timeoutSeconds >= 1 && originalCheckData.timeoutSeconds <= 5 ? originalCheckData.timeoutSeconds : false;
   // Set the keys that may not be set (if the workers have never seen this check before)
   originalCheckData.state = typeof(originalCheckData.state) == 'string' && ['up','down'].indexOf(originalCheckData.state) > -1 ? originalCheckData.state : 'down';
   originalCheckData.lastChecked = typeof(originalCheckData.lastChecked) == 'number' && originalCheckData.lastChecked > 0 ? originalCheckData.lastChecked : false;
-
 
   // If all checks pass, pass the data along to the next step in the process
   if(originalCheckData.id &&
@@ -65,7 +61,7 @@ workers.validateCheckData = function(originalCheckData){
   originalCheckData.url &&
   originalCheckData.method &&
   originalCheckData.successCodes &&
-  originalCheckData.timeOutSeconds){
+  originalCheckData.timeoutSeconds){
     workers.performCheck(originalCheckData);
   } else {
     // If checks fail, log the error and fail silently
@@ -147,15 +143,14 @@ workers.processCheckOutcome = function(originalCheckData,checkOutcome){
   // Decide if an alert is warranted
   var alertWarranted = originalCheckData.lastChecked && originalCheckData.state !== state ? true : false;
 
+  // Log the outcome
+  var timeOfCheck = Date.now();
+  workers.log(originalCheckData,checkOutcome,state,alertWarranted,timeOfCheck);
+
   // Update the check data
   var newCheckData = originalCheckData;
   newCheckData.state = state;
-  newCheckData.lastChecked = Date.now();
-
-
-  // log the outcome
-  const timeOfCheck = Date.now()
-  workers.log(originalCheckData ,checkOutcome, state, alertWarranted, timeOfCheck);
+  newCheckData.lastChecked = timeOfCheck;
 
   // Save the updates
   _data.update('checks',newCheckData.id,newCheckData,function(err){
@@ -184,29 +179,29 @@ workers.alertUserToStatusChange = function(newCheckData){
   });
 };
 
-workers.log = function (originalCheckData ,checkOutcome, state, alertWarranted, timeOfCheck) {
-  // form the log data
-  const logData = {
-    check: originalCheckData,
-    outcome: checkOutcome,
-    state,
-    alert: alertWarranted,
-    time: timeOfCheck
+// Send check data to a log file
+workers.log = function(originalCheckData,checkOutcome,state,alertWarranted,timeOfCheck){
+  // Form the log data
+  var logData = {
+    'check' : originalCheckData,
+    'outcome' : checkOutcome,
+    'state' : state,
+    'alert' : alertWarranted,
+    'time' : timeOfCheck
   };
 
-  // logString data to a string
-  const logString = JSON.stringify(logData);
+  // Convert the data to a string
+  var logString = JSON.stringify(logData);
 
-  //Determine the name of the log file
-  const logFileName = originalCheckData.id;
+  // Determine the name of the log file
+  var logFileName = originalCheckData.id;
 
   // Append the log string to the file
-  _logs.append(logFileName, logString, function (err) {
-    if (!err) {
-      debug("Logging to file succeded");
-    }
-    else {
-      debug("Logging to file FAILED");
+  _logs.append(logFileName,logString,function(err){
+    if(!err){
+      debug("Logging to file succeeded");
+    } else {
+      debug("Logging to file failed");
     }
   });
 
@@ -219,51 +214,48 @@ workers.loop = function(){
   },1000 * 60);
 };
 
-// to rotate aka to compress the log files
-workers.rotateLogs = function () {
-  // listing all the non compressed log files
-  _logs.list(false, function (err, logs) {
-    if (!err && logs) {
-      logs.forEach(function (logName) {
+// Rotate (compress) the log files
+workers.rotateLogs = function(){
+  // List all the (non compressed) log files
+  _logs.list(false,function(err,logs){
+    if(!err && logs && logs.length > 0){
+      logs.forEach(function(logName){
         // Compress the data to a different file
-        const logId = logName.replace('.log', '');
-        const newFileId = logId+'-'+Date.now();
-        _logs.compress(logId, newFileId, function (err) {
-          if (!err) {
-            // Truncating the log
-            _logs.truncate(logId, function (err) {
-              if (!err) {
-                debug("Sucess truncating the log file");
-              }else {
-                debug('Error: truncating the log file');
+        var logId = logName.replace('.log','');
+        var newFileId = logId+'-'+Date.now();
+        _logs.compress(logId,newFileId,function(err){
+          if(!err){
+            // Truncate the log
+            _logs.truncate(logId,function(err){
+              if(!err){
+                debug("Success truncating logfile");
+              } else {
+                debug("Error truncating logfile");
               }
             });
-          }else {
-            debug('Error: compressring one of the log files', err);
+          } else {
+            debug("Error compressing one of the log files.",err);
           }
         });
       });
-    }else {
-      debug("Error: could not find any logs to rotate");
+    } else {
+      debug('Error: Could not find any logs to rotate');
     }
   });
 };
 
-
-
-// timer to execute the log rotation process once per day
-workers.logRotationLoop = function () {
+// Timer to execute the log-rotation process once per day
+workers.logRotationLoop = function(){
   setInterval(function(){
     workers.rotateLogs();
   },1000 * 60 * 60 * 24);
 }
 
-
 // Init script
 workers.init = function(){
 
-  // Send to console in yellow
-  console.log('\x1b[33m%s\x1b[0m', 'Backgroud workers are running ');
+  // Send to console, in yellow
+  console.log('\x1b[33m%s\x1b[0m','Background workers are running');
 
   // Execute all the checks immediately
   workers.gatherAllChecks();
@@ -271,10 +263,10 @@ workers.init = function(){
   // Call the loop so the checks will execute later on
   workers.loop();
 
-  // Compress all the logs immedeatily
+  // Compress all the logs immediately
   workers.rotateLogs();
 
-  // Call the compression loop so logs will be compressed later on
+  // Call the compression loop so checks will execute later on
   workers.logRotationLoop();
 
 };

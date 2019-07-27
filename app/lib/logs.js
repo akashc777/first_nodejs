@@ -124,7 +124,7 @@ lib.decompress = function (fileId, callback) {
       zlib.unzip(inputBuffer, function (err, outputBuffer) {
         if (!err && outputBuffer) {
           // Callback
-          const str = outputBiffer.toString();
+          const str = outputBuffer.toString();
           callback(false, str);
         }else {
           callback(err);
